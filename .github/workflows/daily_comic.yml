@@ -1,0 +1,38 @@
+name: Daily Comic Scraper
+
+on:
+  schedule:
+    # Runs at 7:00 AM Pacific time (14:00 UTC in summer)
+    # Run BEFORE your Tasker schedule so the image is ready
+    - cron: "0 14 * * *"
+  workflow_dispatch:  # manual trigger for testing
+
+jobs:
+  scrape-and-commit:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # needed to commit back to the repo
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Scrape today's comic
+        run: python comic_scraper.py
+
+      - name: Commit and push image
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add today.jpg
+          git diff --staged --quiet || git commit -m "Daily comic: $(date '+%Y-%m-%d')"
+          git push
