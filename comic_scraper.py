@@ -1,7 +1,8 @@
 """
 Daily GoComics scraper — Nancy Classics.
-Uses the GoComics RSS feed to find today's comic image,
-then saves it as today.jpg for Tasker to download.
+Uses comicsrss.com (a third-party aggregator) to get today's strip,
+bypassing GoComics' bot blocking.
+Saves the image as today.jpg for Tasker to download.
 """
 
 import re
@@ -9,64 +10,56 @@ import requests
 from datetime import date
 from xml.etree import ElementTree as ET
 
-COMIC_SLUG = "nancy-classics"
-RSS_URL = f"https://www.gocomics.com/feeds/comics/{COMIC_SLUG}"
+# comicsrss.com is a public third-party aggregator - not blocked like gocomics.com
+RSS_URL = "https://comicsrss.com/rss/nancy-classics"
 
 
 def get_comic_image_url():
     today = date.today()
-    today_str = today.strftime("%Y/%m/%d")
-    print(f"Fetching RSS feed: {RSS_URL}")
+    today_str = today.strftime("%Y-%m-%d")
+    print(f"Fetching RSS feed from comicsrss.com for {today_str}...")
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/rss+xml, application/xml, text/xml, */*",
     }
 
     resp = requests.get(RSS_URL, headers=headers, timeout=15)
     resp.raise_for_status()
+    print(f"RSS feed fetched ({len(resp.content):,} bytes)")
 
     root = ET.fromstring(resp.content)
-    ns = {"media": "http://search.yahoo.com/mrss/"}
 
     for item in root.iter("item"):
-        link = item.findtext("link") or ""
-        if today_str in link:
-            print(f"Found today's comic: {link}")
+        # comicsrss.com puts the date in the title or pubDate
+        title = item.findtext("title") or ""
+        pub_date = item.findtext("pubDate") or ""
+        desc = item.findtext("description") or ""
 
-            # Try media:content first (clean image URL)
-            media = item.find("media:content", ns)
-            if media is not None:
-                src = media.get("url")
-                if src:
-                    print(f"Image URL (media:content): {src}")
-                    return src
+        print(f"  Item: {title[:60]} | {pub_date[:30]}")
 
-            # Fall back to parsing <img> tag in description
-            desc = item.findtext("description") or ""
+        # Look for today's date in the title or pubDate
+        if today_str in title or today.strftime("%b %d, %Y") in title or today_str in pub_date:
+            print(f"Found today's comic: {title}")
+            # Extract image URL from description HTML
             match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc)
             if match:
                 src = match.group(1)
-                print(f"Image URL (description img): {src}")
+                print(f"Image URL: {src}")
                 return src
+            raise RuntimeError("Found today's item but could not extract image URL from description.")
 
-            raise RuntimeError("Found today's item in RSS but could not extract image URL.")
-
-    # If today's entry isn't in the feed yet, use the most recent entry
-    print("Today's entry not found in feed — using most recent entry.")
+    # Fall back to most recent item if today's not found yet
+    print("Today's entry not found — using most recent entry.")
     for item in root.iter("item"):
-        media = item.find("media:content", ns)
-        if media is not None:
-            src = media.get("url")
-            if src:
-                print(f"Image URL (latest entry): {src}")
-                return src
         desc = item.findtext("description") or ""
         match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc)
         if match:
-            return match.group(1)
+            src = match.group(1)
+            print(f"Image URL (latest): {src}")
+            return src
 
-    raise RuntimeError("Could not find any comic image in RSS feed.")
+    raise RuntimeError("Could not find any comic image in the RSS feed.")
 
 
 def download_image(url):
