@@ -11,7 +11,7 @@ from datetime import date
 from xml.etree import ElementTree as ET
 
 # comicsrss.com is a public third-party aggregator - not blocked like gocomics.com
-RSS_URL = "https://comicsrss.com/rss/nancy-classics"
+RSS_URL = "https://comicsrss.com/rss/nancy-classics.rss"
 
 
 def get_comic_image_url():
