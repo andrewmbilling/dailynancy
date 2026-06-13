@@ -1,45 +1,78 @@
 """
 Daily GoComics scraper — Nancy Classics.
-Fetches today's strip and saves it as today.jpg in the repo.
-GitHub Actions commits and pushes it so Tasker can download it at a stable URL.
+Uses the GoComics RSS feed to find today's comic image,
+then saves it as today.jpg for Tasker to download.
 """
 
-import os
+import re
 import requests
 from datetime import date
-from bs4 import BeautifulSoup
+from xml.etree import ElementTree as ET
 
 COMIC_SLUG = "nancy-classics"
-GOCOMICS_URL = f"https://www.gocomics.com/{COMIC_SLUG}"
+RSS_URL = f"https://www.gocomics.com/feeds/comics/{COMIC_SLUG}"
 
 
 def get_comic_image_url():
     today = date.today()
-    url = f"{GOCOMICS_URL}/{today.strftime('%Y/%m/%d')}"
-    print(f"Fetching comic from: {url}")
+    today_str = today.strftime("%Y/%m/%d")
+    print(f"Fetching RSS feed: {RSS_URL}")
 
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; ComicBot/1.0)"}
-    resp = requests.get(url, headers=headers, timeout=15)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+    }
+
+    resp = requests.get(RSS_URL, headers=headers, timeout=15)
     resp.raise_for_status()
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    root = ET.fromstring(resp.content)
+    ns = {"media": "http://search.yahoo.com/mrss/"}
 
-    img = soup.select_one("picture.item-comic-image img") or \
-          soup.select_one("img.img-fluid")
+    for item in root.iter("item"):
+        link = item.findtext("link") or ""
+        if today_str in link:
+            print(f"Found today's comic: {link}")
 
-    if not img:
-        raise RuntimeError("Could not find comic image — GoComics may have changed their layout.")
+            # Try media:content first (clean image URL)
+            media = item.find("media:content", ns)
+            if media is not None:
+                src = media.get("url")
+                if src:
+                    print(f"Image URL (media:content): {src}")
+                    return src
 
-    src = img.get("src") or img.get("data-src")
-    if not src:
-        raise RuntimeError("Image tag found but no src attribute.")
+            # Fall back to parsing <img> tag in description
+            desc = item.findtext("description") or ""
+            match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc)
+            if match:
+                src = match.group(1)
+                print(f"Image URL (description img): {src}")
+                return src
 
-    print(f"Comic image URL: {src}")
-    return src
+            raise RuntimeError("Found today's item in RSS but could not extract image URL.")
+
+    # If today's entry isn't in the feed yet, use the most recent entry
+    print("Today's entry not found in feed — using most recent entry.")
+    for item in root.iter("item"):
+        media = item.find("media:content", ns)
+        if media is not None:
+            src = media.get("url")
+            if src:
+                print(f"Image URL (latest entry): {src}")
+                return src
+        desc = item.findtext("description") or ""
+        match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc)
+        if match:
+            return match.group(1)
+
+    raise RuntimeError("Could not find any comic image in RSS feed.")
 
 
 def download_image(url):
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; ComicBot/1.0)"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
     resp = requests.get(url, headers=headers, timeout=20)
     resp.raise_for_status()
     return resp.content
@@ -49,7 +82,6 @@ def main():
     image_url = get_comic_image_url()
     image_bytes = download_image(image_url)
 
-    # Save as today.jpg — Tasker always fetches this same filename
     output_path = "today.jpg"
     with open(output_path, "wb") as f:
         f.write(image_bytes)
